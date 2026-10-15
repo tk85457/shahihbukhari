@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:go_router/go_router.dart';
 import '../../theme/app_theme.dart';
-import '../../widgets/banner_ad_widget.dart';
+import '../../core/ads/ad_service.dart';
+import '../../core/services/in_app_review_service.dart';
 import 'settings_provider.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -19,6 +21,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _fontColors = ['Default', 'Black', 'Dark Brown', 'Dark Blue', 'Dark Green'];
   final _alignments = ['Right', 'Center', 'Left'];
 
+  bool _privacyOptionsRequired = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkPrivacyOptions();
+  }
+
+  Future<void> _checkPrivacyOptions() async {
+    final required = await AdService.isPrivacyOptionsRequired();
+    if (mounted && required != _privacyOptionsRequired) {
+      setState(() {
+        _privacyOptionsRequired = required;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
@@ -26,7 +45,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      bottomNavigationBar: const BannerAdWidget(),
       appBar: AppBar(
         title: const Text('Settings'),
         centerTitle: true,
@@ -154,6 +172,100 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
             ]),
+
+            // ─── Support & Feedback Section ───
+            _buildSectionCard(isDark, 'Support & Feedback', [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(
+                  Icons.star_rounded,
+                  color: Colors.amber,
+                  size: 28,
+                ),
+                title: Text(
+                  'Rate this App',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? Colors.grey.shade300 : AppTheme.textDark,
+                  ),
+                ),
+                subtitle: Text(
+                  'Rate us on Google Play to support the project',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                  ),
+                ),
+                trailing: const Icon(Icons.chevron_right, size: 20),
+                onTap: () {
+                  InAppReviewService.showRatingDialog(context, isManual: true);
+                },
+              ),
+              Divider(
+                height: 16,
+                color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  Icons.auto_stories_rounded,
+                  color: Theme.of(context).primaryColor,
+                  size: 26,
+                ),
+                title: Text(
+                  'Our Other Hadith Apps',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? Colors.grey.shade300 : AppTheme.textDark,
+                  ),
+                ),
+                subtitle: Text(
+                  'Explore Sahih Muslim, Abu Dawood & more',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                  ),
+                ),
+                trailing: const Icon(Icons.chevron_right, size: 20),
+                onTap: () {
+                  context.go('/home/more-apps');
+                },
+              ),
+            ]),
+
+            // ─── Privacy & Consent Section (Google UMP Requirement) ───
+            if (_privacyOptionsRequired)
+              _buildSectionCard(isDark, 'Privacy & Consent', [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    Icons.privacy_tip_outlined,
+                    color: Theme.of(context).primaryColor,
+                  ),
+                  title: Text(
+                    'Ad Privacy Settings',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? Colors.grey.shade300 : AppTheme.textDark,
+                    ),
+                  ),
+                  subtitle: Text(
+                    'Review or change your advertising consent choices',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                    ),
+                  ),
+                  trailing: const Icon(Icons.chevron_right, size: 20),
+                  onTap: () async {
+                    await AdService.showPrivacyOptionsForm();
+                    _checkPrivacyOptions();
+                  },
+                ),
+              ]),
           ],
         ).animate().fadeIn(duration: 400.ms),
       ),

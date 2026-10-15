@@ -7,7 +7,6 @@ import '../../theme/app_theme.dart';
 import '../../data/repositories/hadith_repository.dart';
 import '../settings/settings_provider.dart';
 import '../../domain/models/models.dart';
-import '../../widgets/banner_ad_widget.dart';
 
 final collectionDetailsProvider = FutureProvider.family<HadithCollection?, int>(
   (ref, id) async {
@@ -35,7 +34,6 @@ class CollectionDetailScreen extends ConsumerWidget {
     final hadithsAsync = ref.watch(collectionHadithsProvider(collectionId));
 
     return Scaffold(
-      bottomNavigationBar: const BannerAdWidget(),
       appBar: AppBar(
         title: collectionAsync.when(
           data: (c) => Text(c?.name ?? 'Collection'),
@@ -91,9 +89,12 @@ class CollectionDetailScreen extends ConsumerWidget {
                     hadith.hadithNumber,
                   );
                   if (context.mounted) {
-                    context.push(
+                    await context.push(
                       '/home/chapter/${hadith.chapterId}?startIndex=$hIndex',
                     );
+                    if (context.mounted) {
+                      ref.invalidate(lastProgressProvider);
+                    }
                   }
                 },
                 borderRadius: BorderRadius.circular(12),

@@ -4,7 +4,6 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import '../../theme/app_theme.dart';
 import '../../data/repositories/hadith_repository.dart';
-import '../../widgets/banner_ad_widget.dart';
 
 final allNotesWithInfoProvider = FutureProvider<List<Map<String, dynamic>>>((
   ref,
@@ -22,7 +21,6 @@ class NotesScreen extends ConsumerWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      bottomNavigationBar: const BannerAdWidget(),
       appBar: AppBar(title: const Text('My Notes'), centerTitle: true),
       body: RefreshIndicator(
         onRefresh: () async {
@@ -166,9 +164,12 @@ class NotesScreen extends ConsumerWidget {
                           hadith.hadithNumber,
                         );
                         if (context.mounted) {
-                          context.push(
+                          await context.push(
                             '/home/chapter/${hadith.chapterId}?startIndex=$hIndex',
                           );
+                          if (context.mounted) {
+                            ref.invalidate(lastProgressProvider);
+                          }
                         }
                       }
                     },

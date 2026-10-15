@@ -6,7 +6,6 @@ import '../../theme/app_theme.dart';
 import '../../data/repositories/hadith_repository.dart';
 import '../../domain/models/models.dart';
 import '../settings/settings_provider.dart';
-import '../../widgets/banner_ad_widget.dart';
 
 final bookmarkedHadithsProvider = FutureProvider<List<Map<String, dynamic>>>((
   ref,
@@ -25,7 +24,6 @@ class BookmarksScreen extends ConsumerWidget {
     final settings = ref.watch(settingsProvider);
 
     return Scaffold(
-      bottomNavigationBar: const BannerAdWidget(),
       appBar: AppBar(title: const Text('Bookmarks'), centerTitle: true),
       body: RefreshIndicator(
         onRefresh: () async {
@@ -182,9 +180,12 @@ class BookmarksScreen extends ConsumerWidget {
                         hadith.hadithNumber,
                       );
                       if (context.mounted) {
-                        context.push(
+                        await context.push(
                           '/home/chapter/${hadith.chapterId}?startIndex=$hIndex',
                         );
+                        if (context.mounted) {
+                          ref.invalidate(lastProgressProvider);
+                        }
                       }
                     },
                     borderRadius: BorderRadius.circular(12),

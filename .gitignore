@@ -47,3 +47,8 @@ app.*.map.json
 .gradle_build_home/
 .gradle/
 scratch/
+build_log.txt
+flutter_analyze_output*.txt
+test_*.png
+device_screen.png
+inspector_*.png

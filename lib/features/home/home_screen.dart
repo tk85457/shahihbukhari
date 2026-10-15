@@ -9,9 +9,10 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../theme/app_theme.dart';
 import '../../data/repositories/hadith_repository.dart';
-import '../../core/ads/ad_service.dart';
-import '../../widgets/banner_ad_widget.dart';
+import '../../core/ads/ad_free_service.dart';
+import '../../core/services/in_app_review_service.dart';
 import '../../domain/models/models.dart';
+import '../../widgets/ad_choice_dialog.dart';
 import '../settings/settings_provider.dart';
 import '../common/widgets/shimmer_loading.dart';
 
@@ -66,37 +67,32 @@ class HomeScreen extends ConsumerWidget {
     final chaptersAsync = ref.watch(chaptersProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'Sahih Bukhari',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-        ),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.volunteer_activism, color: Colors.amber),
-            tooltip: 'Support App (Watch Ad)',
-            onPressed: () {
-              HapticFeedback.heavyImpact();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Loading Rewarded Ad... Thank you! 💚'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
-              AdService.showRewardedAd(
-                onUserEarnedReward: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('JazakAllah Khair! Thank you for supporting the app! 💚'),
-                      backgroundColor: Color(0xFF0A7E47),
-                    ),
-                  );
-                },
-              );
-            },
+    return AdChoicePromptHost(
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text(
+            'Sahih Bukhari',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
           ),
+          centerTitle: true,
+          actions: [
+            // Replaces the old "watch rewarded ad" icon: opens the 24h ad-free choice.
+            ValueListenableBuilder<bool>(
+              valueListenable: AdFreeService.adFreeNotifier,
+              builder: (context, adFree, _) => IconButton(
+                icon: Icon(
+                  adFree ? Icons.verified_rounded : Icons.volunteer_activism,
+                  color: adFree ? Colors.greenAccent : Colors.amber,
+                ),
+                tooltip: adFree
+                    ? 'Banner ads are off'
+                    : 'Remove banner ads for 24 hours',
+                onPressed: () {
+                  HapticFeedback.lightImpact();
+                  AdChoiceDialog.show(context);
+                },
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {
@@ -107,8 +103,10 @@ class HomeScreen extends ConsumerWidget {
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             onSelected: (value) {
-              HapticFeedback.selectionClick();
               switch (value) {
+                case 'RateApp':
+                  InAppReviewService.showRatingDialog(context, isManual: true);
+                  break;
                 case 'Backup':
                   _showBackupDialog(context, ref);
                   break;
@@ -118,9 +116,33 @@ class HomeScreen extends ConsumerWidget {
                 case 'AppIntro':
                   context.go('/home/about');
                   break;
+                case 'MoreApps':
+                  HapticFeedback.lightImpact();
+                  context.go('/home/more-apps');
+                  break;
               }
             },
             itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'MoreApps',
+                child: Row(
+                  children: [
+                    Icon(Icons.auto_stories_rounded, color: Color(0xFF0A7E47), size: 22),
+                    SizedBox(width: 10),
+                    Text('Other Hadith Apps 📚'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'RateApp',
+                child: Row(
+                  children: [
+                    Icon(Icons.star_rounded, color: Colors.amber, size: 22),
+                    SizedBox(width: 10),
+                    Text('Rate this App ⭐'),
+                  ],
+                ),
+              ),
               const PopupMenuItem(
                 value: 'Backup',
                 child: Text('Backup and Restore Data'),
@@ -179,6 +201,13 @@ class HomeScreen extends ConsumerWidget {
                   .fadeIn(delay: 400.ms, duration: 600.ms)
                   .shimmer(color: Colors.white24),
             ),
+            // Other Hadith Apps Discovery Banner
+            SliverToBoxAdapter(
+              child: _buildOtherAppsBanner(context, isDark)
+                  .animate()
+                  .fadeIn(delay: 450.ms, duration: 500.ms)
+                  .slideY(begin: 0.05, end: 0),
+            ),
             chaptersAsync.when(
               loading: () => SliverList(
                 delegate: SliverChildBuilderDelegate(
@@ -212,7 +241,106 @@ class HomeScreen extends ConsumerWidget {
       ),
       floatingActionButton: _buildResumeButton(context, ref, isDark),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-      bottomNavigationBar: const BannerAdWidget(),
+    ),
+  );
+  }
+
+  Widget _buildOtherAppsBanner(BuildContext context, bool isDark) {
+    final primaryColor = Theme.of(context).primaryColor;
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.cardDark : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: primaryColor.withValues(alpha: isDark ? 0.35 : 0.25),
+          width: 1.2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: primaryColor.withValues(alpha: isDark ? 0.15 : 0.08),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () {
+            HapticFeedback.lightImpact();
+            context.go('/home/more-apps');
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.asset(
+                    'assets/images/other_apps/all_hadith.webp',
+                    width: 44,
+                    height: 44,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Other Hadith Books',
+                              style: TextStyle(
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.bold,
+                                color: isDark ? Colors.white : Colors.black87,
+                              ),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.withValues(alpha: 0.18),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Text(
+                              'Explore 📚',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.amber,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'All Hadith, Sahih Muslim, Abu Dawood & more',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 14,
+                  color: isDark ? Colors.grey.shade500 : Colors.grey.shade400,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -277,9 +405,14 @@ class HomeScreen extends ConsumerWidget {
                         hadith.hadithNumber,
                       );
                       if (context.mounted) {
-                        context.go(
+                        await context.push(
                           '/home/chapter/${hadith.chapterId}?startIndex=$idx',
                         );
+                        if (context.mounted) {
+                          ref.invalidate(lastProgressProvider);
+                          ref.invalidate(statsProvider);
+                          ref.invalidate(chapterProgressProvider);
+                        }
                       }
                     },
                     child: Padding(
@@ -646,9 +779,14 @@ class HomeScreen extends ConsumerWidget {
               result.hadithNumber,
             );
             if (context.mounted) {
-              context.go(
+              await context.push(
                 '/home/chapter/${result.chapterId}?startIndex=$hIndex',
               );
+              if (context.mounted) {
+                ref.invalidate(lastProgressProvider);
+                ref.invalidate(statsProvider);
+                ref.invalidate(chapterProgressProvider);
+              }
             }
           } else if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -857,7 +995,7 @@ class HomeScreen extends ConsumerWidget {
               onTap: () async {
                 final repo = ref.read(hadithRepositoryProvider);
                 final data = await repo.exportUserData();
-                Navigator.pop(ctx);
+                if (ctx.mounted) Navigator.pop(ctx);
                 final text = jsonEncode(data);
                 await Clipboard.setData(ClipboardData(text: text));
                 if (context.mounted) {
@@ -1017,8 +1155,6 @@ class HomeScreen extends ConsumerWidget {
   }
 
   Widget _buildResumeButton(BuildContext context, WidgetRef ref, bool isDark) {
-    final progressAsync = ref.watch(lastProgressProvider);
-
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 60),
       child: Material(
@@ -1028,20 +1164,29 @@ class HomeScreen extends ConsumerWidget {
         shadowColor: Theme.of(context).primaryColor.withValues(alpha: 0.3),
         child: InkWell(
           borderRadius: BorderRadius.circular(30),
-          onTap: () {
-            progressAsync.whenData((progress) {
-              if (progress != null) {
-                context.go(
-                  '/home/chapter/${progress.chapterId}?startIndex=${progress.hadithIndex}',
-                );
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Start reading a hadith to enable resume!'),
-                  ),
-                );
+          onTap: () async {
+            HapticFeedback.lightImpact();
+            final repo = ref.read(hadithRepositoryProvider);
+            // Fetch the absolute latest progress directly from SQLite
+            final progress = await repo.getLastReadingProgress();
+            if (progress != null && context.mounted) {
+              await context.push(
+                '/home/chapter/${progress.chapterId}?startIndex=${progress.hadithIndex}',
+              );
+              // Invalidate providers when returning to Home screen
+              if (context.mounted) {
+                ref.invalidate(lastProgressProvider);
+                ref.invalidate(statsProvider);
+                ref.invalidate(chapterProgressProvider);
               }
-            });
+            } else if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Start reading a hadith to enable resume!'),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
           },
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -1097,7 +1242,14 @@ class _ChapterCard extends ConsumerWidget {
     final settings = ref.watch(settingsProvider);
 
     return GestureDetector(
-          onTap: () => context.go('/home/chapterList/${chapter.id}'),
+          onTap: () async {
+            await context.push('/home/chapterList/${chapter.id}');
+            if (context.mounted) {
+              ref.invalidate(lastProgressProvider);
+              ref.invalidate(statsProvider);
+              ref.invalidate(chapterProgressProvider);
+            }
+          },
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),

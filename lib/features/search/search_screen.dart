@@ -7,7 +7,6 @@ import '../../data/repositories/hadith_repository.dart';
 import '../../domain/models/models.dart';
 import '../settings/settings_provider.dart';
 import '../collections/collections_screen.dart';
-import '../../widgets/banner_ad_widget.dart';
 
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({super.key});
@@ -99,7 +98,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final settings = ref.watch(settingsProvider);
 
     return Scaffold(
-      bottomNavigationBar: const BannerAdWidget(),
       appBar: AppBar(title: const Text('Search Hadith'), centerTitle: true),
       body: Column(
         children: [
@@ -429,11 +427,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                                       hadith.chapterId,
                                       hadith.hadithNumber,
                                     );
-                                    if (context.mounted) {
-                                      context.go(
-                                        '/home/chapter/${hadith.chapterId}?startIndex=$hIndex',
-                                      );
-                                    }
+                                     if (context.mounted) {
+                                       await context.push(
+                                         '/home/chapter/${hadith.chapterId}?startIndex=$hIndex',
+                                       );
+                                        if (context.mounted) {
+                                          ref.invalidate(lastProgressProvider);
+                                        }
+                                     }
                                   },
                                   onLongPress: () =>
                                       _showAddToCollectionDialog(hadith),

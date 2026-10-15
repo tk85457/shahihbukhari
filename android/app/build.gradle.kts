@@ -19,6 +19,7 @@ android {
     ndkVersion = "28.2.13676358"
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -55,6 +56,12 @@ android {
             )
         }
     }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
+    }
 }
 
 flutter {
@@ -62,7 +69,18 @@ flutter {
 }
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     implementation("androidx.activity:activity-ktx:1.9.0")
+
+    // Google Mobile Ads Mediation Adapters & SDKs
+    // Unity Ads SDK + Official Google AdMob Adapter
+    implementation("com.unity3d.ads:unity-ads:4.13.1")
+    implementation("com.google.ads.mediation:unity:4.13.1.0")
+    // Meta Audience Network
+    implementation("com.google.ads.mediation:facebook:6.18.0.0")
+    // ironSource (Unity LevelPlay) Official Google Mediation Adapter & Core SDK
+    implementation("com.google.ads.mediation:ironsource:8.7.0.0")
+    implementation("com.ironsource.sdk:mediationsdk:8.7.0")
 }
 
 // --- 16 KB page size fix -----------------------------------------------

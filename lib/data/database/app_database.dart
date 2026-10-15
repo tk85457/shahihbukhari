@@ -17,6 +17,9 @@ class AppDatabase {
 
   AppDatabase._init();
 
+  /// Returns true if the SQLite database is already open and ready in memory.
+  bool get isInitialized => _database != null && _database!.isOpen;
+
   Future<Database> get database async {
     if (_database != null) return _database!;
     _database = await _openDatabase();

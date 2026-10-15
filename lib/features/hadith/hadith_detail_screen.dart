@@ -15,7 +15,7 @@ import '../notes/notes_screen.dart' show allNotesWithInfoProvider;
 import '../hadith/hadith_list_screen.dart';
 import '../home/home_screen.dart' show statsProvider, chapterProgressProvider;
 import 'share_image_screen.dart';
-import '../../widgets/banner_ad_widget.dart';
+import '../../core/services/in_app_review_service.dart';
 
 final hadithsByChapterProvider = FutureProvider.family<List<Hadith>, int>((
   ref,
@@ -66,6 +66,27 @@ class _HadithDetailScreenState extends ConsumerState<HadithDetailScreen> {
     super.initState();
     _currentIndex = widget.startIndex;
     _pageController = PageController(initialPage: widget.startIndex);
+    _onHadithViewed();
+    // Prompt review on 2nd detail visit (with 3-day cooldown if dismissed/cancelled)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        InAppReviewService.checkPromptOnHadithDetail();
+      }
+    });
+    // IMMEDIATELY save reading progress for the opened hadith
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _saveProgress();
+      }
+    });
+  }
+
+  void _onHadithViewed() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        InAppReviewService.incrementHadithReadAndCheckPrompt(context);
+      }
+    });
   }
 
   @override
@@ -93,62 +114,70 @@ class _HadithDetailScreenState extends ConsumerState<HadithDetailScreen> {
     final settings = ref.watch(settingsProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Scaffold(
-      bottomNavigationBar: const BannerAdWidget(),
-      appBar: AppBar(
-        title: Text('Chapter ${widget.chapterId}'),
-        centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            _saveProgress();
-            context.pop();
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          final repo = ref.read(hadithRepositoryProvider);
+          repo.saveReadingProgress(widget.chapterId, _currentIndex);
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text('Chapter ${widget.chapterId}'),
+          centerTitle: true,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () {
+              _saveProgress();
+              context.pop();
+            },
+          ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.text_fields),
+              onPressed: () => _showFontSizeDialog(),
+              tooltip: 'Font Size',
+            ),
+          ],
+        ),
+        body: hadithsAsync.when(
+          loading: () => Center(
+            child: CircularProgressIndicator(
+              color: Theme.of(context).primaryColor,
+            ),
+          ),
+          error: (e, _) => Center(child: Text('Error: $e')),
+          data: (hadiths) {
+            if (hadiths.isEmpty) {
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.menu_book,
+                      size: 80,
+                      color: isDark ? Colors.grey.shade600 : Colors.grey.shade300,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'No hadiths in this chapter yet',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: isDark
+                            ? Colors.grey.shade400
+                            : Colors.grey.shade500,
+                      ),
+                    ),
+                  ],
+                ).animate().fadeIn(duration: 500.ms),
+              );
+            }
+            // FIX: Removed _saveProgress() from build() — now only called in onPageChanged
+            if (_currentIndex >= hadiths.length) _currentIndex = 0;
+            return _buildHadithView(hadiths, hadiths.length, settings, isDark);
           },
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.text_fields),
-            onPressed: () => _showFontSizeDialog(),
-            tooltip: 'Font Size',
-          ),
-        ],
-      ),
-      body: hadithsAsync.when(
-        loading: () => Center(
-          child: CircularProgressIndicator(
-            color: Theme.of(context).primaryColor,
-          ),
-        ),
-        error: (e, _) => Center(child: Text('Error: $e')),
-        data: (hadiths) {
-          if (hadiths.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.menu_book,
-                    size: 80,
-                    color: isDark ? Colors.grey.shade600 : Colors.grey.shade300,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No hadiths in this chapter yet',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: isDark
-                          ? Colors.grey.shade400
-                          : Colors.grey.shade500,
-                    ),
-                  ),
-                ],
-              ).animate().fadeIn(duration: 500.ms),
-            );
-          }
-          // FIX: Removed _saveProgress() from build() — now only called in onPageChanged
-          if (_currentIndex >= hadiths.length) _currentIndex = 0;
-          return _buildHadithView(hadiths, hadiths.length, settings, isDark);
-        },
       ),
     );
   }
@@ -255,6 +284,7 @@ class _HadithDetailScreenState extends ConsumerState<HadithDetailScreen> {
               });
               // FIX: Only save progress on page change, not during build()
               _saveProgress();
+              _onHadithViewed();
             },
             itemBuilder: (context, index) {
               final activeHadith = hadiths[index];
@@ -600,6 +630,9 @@ class _HadithDetailScreenState extends ConsumerState<HadithDetailScreen> {
                         ),
                       ),
                     );
+                    if (!wasBookmarked) {
+                      InAppReviewService.checkPromptOnAction(context, action: 'bookmark');
+                    }
                   }
                 },
               );

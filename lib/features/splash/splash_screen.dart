@@ -5,9 +5,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../data/database/app_database.dart';
 import '../../data/isar/isar_service.dart';
-
+import '../../core/ads/ad_service.dart';
+import '../../core/services/in_app_review_service.dart';
 // Read version from pubspec.yaml at build time
-const String appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '1.1.3');
+const String appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '1.1.24');
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -69,11 +70,10 @@ class _SplashScreenState extends State<SplashScreen>
       ),
     );
 
-    Future.delayed(const Duration(milliseconds: 100), () {
-      if (mounted) _iconController.forward();
-    });
+    // Start animation immediately — no delay for faster first paint
+    _iconController.forward();
 
-    // FIX: Load DB and prefs in parallel, with a minimum 2s splash wait
+    // Load DB and prefs in parallel
     _initAndNavigate();
   }
 
@@ -84,21 +84,75 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _initAndNavigate() async {
-    // Start DB and prefs in parallel — navigate once both are ready
-    final results = await Future.wait([
-      // Minimum splash duration (2 seconds — for animation)
-      Future.delayed(const Duration(milliseconds: 2000)),
-      // DB warm-up: first query will be fast afterwards
-      AppDatabase.instance.database.then((_) => IsarService.instance.db),
-      // Load SharedPrefs in parallel as well
-      SharedPreferences.getInstance(),
-    ]);
+    try {
+      // WARM/HOT START FIX: If database is already in memory, skip splash entirely
+      final isWarm = AppDatabase.instance.isInitialized;
 
-    if (!mounted) return;
+      // Record app open in background — don't block navigation
+      InAppReviewService.recordAppOpen();
 
-    final prefs = results[2] as SharedPreferences;
-    final onboardingDone = prefs.getBool('onboarding_done') ?? false;
-    context.go(onboardingDone ? '/home' : '/language-select');
+      if (isWarm) {
+        // WARM/HOT START: DB already in memory → navigate INSTANTLY
+        if (!mounted) return;
+        final prefs = await SharedPreferences.getInstance();
+        if (!mounted) return;
+        final onboardingDone = prefs.getBool('onboarding_done') ?? false;
+        context.go(onboardingDone ? '/home' : '/language-select');
+        _scheduleAdInit();
+        return;
+      }
+
+      // COLD START: parallel SQLite DB + prefs init with minimal splash duration (500ms)
+      final results = await Future.wait([
+        // Minimum splash for smooth animation
+        Future.delayed(const Duration(milliseconds: 500)),
+        // SQLite DB warm-up: fast and needed immediately for Home Screen chapters
+        AppDatabase.instance.database,
+        // Load SharedPrefs in parallel
+        SharedPreferences.getInstance(),
+      ]);
+
+      // Trigger Isar warm-up in background (for search indexing) without blocking splash navigation
+      IsarService.instance.db.catchError((err) {
+        debugPrint('Background Isar sync error: $err');
+        return IsarService.instance.db;
+      });
+
+      if (!mounted) return;
+
+      final prefs = results[2] as SharedPreferences;
+      final onboardingDone = prefs.getBool('onboarding_done') ?? false;
+      context.go(onboardingDone ? '/home' : '/language-select');
+      _scheduleAdInit();
+    } catch (e, stack) {
+      debugPrint('SplashScreen init error: $e\n$stack');
+      if (!mounted) return;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        if (!mounted) return;
+        final onboardingDone = prefs.getBool('onboarding_done') ?? false;
+        context.go(onboardingDone ? '/home' : '/language-select');
+      } catch (_) {
+        if (!mounted) return;
+        context.go('/home');
+      }
+      _scheduleAdInit();
+    }
+  }
+
+  /// ANR FIX: Ad SDK init (UMP consent + AdMob + Unity/ironSource/Meta
+  /// mediation adapters) is heavy. Previously it started at the same moment as
+  /// the cold-start Isar/SQLite migration, so both fought for CPU/IO while the
+  /// main thread was trying to draw and handle input. Now it starts only after
+  /// the first real screen is on display. Not tied to this widget's lifecycle,
+  /// so it still runs after the splash is disposed.
+  void _scheduleAdInit() {
+    // 4.5 s (was 1.5 s): lets the home screen finish first draw and the
+    // user's first taps be handled before the heavy SDK + 3 mediation
+    // adapters (Unity / Meta / ironSource) start initialising.
+    Future<void>.delayed(const Duration(milliseconds: 4500), () {
+      AdService.gatherConsentAndInitialize();
+    });
   }
 
   @override

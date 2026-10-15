@@ -8,7 +8,7 @@ import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'theme/app_theme.dart';
 import 'core/router.dart';
-import 'core/ads/ad_service.dart';
+import 'core/ads/ad_free_service.dart';
 import 'features/settings/settings_provider.dart';
 
 void main() {
@@ -19,15 +19,16 @@ void main() {
     debugPrint = (String? message, {int? wrapWidth}) {};
   }
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  // Android 15 (SDK 35) edge-to-edge: transparent system bars, no deprecated APIs
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
       systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarIconBrightness: Brightness.dark,
+      systemNavigationBarContrastEnforced: false,
     ),
   );
-
-  // Initialize AdMob Mobile Ads SDK asynchronously without blocking first frame
-  AdService.initialize();
 
   // Cheap, synchronous factory wiring for web/desktop — no I/O, safe to run
   // before the first frame.
@@ -67,6 +68,9 @@ class _Bootstrap extends StatelessWidget {
         if (prefs == null) {
           return const _BootLoading();
         }
+        // Initialize 24h ad-free service before real app widget builds
+        AdFreeService.init(prefs);
+
         return ProviderScope(
           overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
           child: const SahihBukhariApp(),

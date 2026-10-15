@@ -6,7 +6,6 @@ import '../../theme/app_theme.dart';
 import '../../data/repositories/hadith_repository.dart';
 import '../../domain/models/models.dart';
 import '../settings/settings_provider.dart';
-import '../../widgets/banner_ad_widget.dart';
 
 final chapterHadithsListProvider = FutureProvider.family<List<Hadith>, int>((ref, chapterId) async {
   final repo = ref.watch(hadithRepositoryProvider);
@@ -102,8 +101,11 @@ class HadithListScreen extends ConsumerWidget {
                     final hadith = hadiths[index];
 
                     return GestureDetector(
-                      onTap: () {
-                        context.push('/home/chapter/$chapterId?startIndex=$index');
+                      onTap: () async {
+                        await context.push('/home/chapter/$chapterId?startIndex=$index');
+                        if (context.mounted) {
+                          ref.invalidate(lastProgressProvider);
+                        }
                       },
                       child: Container(
                         margin: const EdgeInsets.only(bottom: 8),
@@ -181,7 +183,6 @@ class HadithListScreen extends ConsumerWidget {
           ),
         ],
       ),
-      bottomNavigationBar: const BannerAdWidget(),
     );
   }
 }
