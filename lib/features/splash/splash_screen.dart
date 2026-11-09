@@ -7,8 +7,12 @@ import '../../data/database/app_database.dart';
 import '../../data/isar/isar_service.dart';
 import '../../core/ads/ad_service.dart';
 import '../../core/services/in_app_review_service.dart';
+
 // Read version from pubspec.yaml at build time
-const String appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '1.1.24');
+const String appVersion = String.fromEnvironment(
+  'APP_VERSION',
+  defaultValue: '1.1.25',
+);
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -113,10 +117,13 @@ class _SplashScreenState extends State<SplashScreen>
       ]);
 
       // Trigger Isar warm-up in background (for search indexing) without blocking splash navigation
-      IsarService.instance.db.catchError((err) {
-        debugPrint('Background Isar sync error: $err');
-        return IsarService.instance.db;
-      });
+      // Errors are logged only; the next caller of `db` retries cleanly.
+      IsarService.instance.db.then<void>(
+        (_) {},
+        onError: (Object err) {
+          debugPrint('Background Isar warm-up error: $err');
+        },
+      );
 
       if (!mounted) return;
 
@@ -140,7 +147,7 @@ class _SplashScreenState extends State<SplashScreen>
     }
   }
 
-  /// ANR FIX: Ad SDK init (UMP consent + AdMob + Unity/ironSource/Meta
+  /// ANR FIX: Ad SDK init (UMP consent + AdMob + Unity/Meta
   /// mediation adapters) is heavy. Previously it started at the same moment as
   /// the cold-start Isar/SQLite migration, so both fought for CPU/IO while the
   /// main thread was trying to draw and handle input. Now it starts only after
@@ -149,9 +156,18 @@ class _SplashScreenState extends State<SplashScreen>
   void _scheduleAdInit() {
     // 4.5 s (was 1.5 s): lets the home screen finish first draw and the
     // user's first taps be handled before the heavy SDK + 3 mediation
-    // adapters (Unity / Meta / ironSource) start initialising.
-    Future<void>.delayed(const Duration(milliseconds: 4500), () {
-      AdService.gatherConsentAndInitialize();
+    // adapters (Unity / Meta) start initialising.
+    Future<void>(() async {
+      try {
+        await Future<void>.delayed(const Duration(milliseconds: 4500));
+        // First launch: the Isar search-index import can run for several
+        // seconds. Never start the ad SDK (UMP + AdMob + mediation) while it
+        // is running - wait for it (max 60 s). Returns instantly otherwise.
+        await IsarService.instance.whenWarmupDone();
+        await AdService.gatherConsentAndInitialize();
+      } catch (e) {
+        debugPrint('Ad init scheduling error: $e');
+      }
     });
   }
 
@@ -165,11 +181,7 @@ class _SplashScreenState extends State<SplashScreen>
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF0A7E47),
-              Color(0xFF0F9D58),
-              Color(0xFF14B866),
-            ],
+            colors: [Color(0xFF0A7E47), Color(0xFF0F9D58), Color(0xFF14B866)],
           ),
         ),
         child: SafeArea(
@@ -215,21 +227,19 @@ class _SplashScreenState extends State<SplashScreen>
                               children: [
                                 if (_circleScale.value > 0.1)
                                   Container(
-                                    width: 170,
-                                    height: 170,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                        color: Colors.white.withValues(
-                                          alpha: 0.2 * _circleOpacity.value,
+                                        width: 170,
+                                        height: 170,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.2 * _circleOpacity.value,
+                                            ),
+                                            width: 2,
+                                          ),
                                         ),
-                                        width: 2,
-                                      ),
-                                    ),
-                                  )
-                                      .animate(
-                                        onPlay: (c) => c.repeat(),
                                       )
+                                      .animate(onPlay: (c) => c.repeat())
                                       .scale(
                                         duration: 2.seconds,
                                         begin: const Offset(1, 1),
@@ -291,14 +301,14 @@ class _SplashScreenState extends State<SplashScreen>
                 const SizedBox(height: 32),
 
                 Text(
-                  'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ',
-                  style: GoogleFonts.amiri(
-                    fontSize: 22,
-                    color: Colors.white.withValues(alpha: 0.9),
-                    fontWeight: FontWeight.w400,
-                  ),
-                  textDirection: TextDirection.rtl,
-                )
+                      'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ',
+                      style: GoogleFonts.amiri(
+                        fontSize: 22,
+                        color: Colors.white.withValues(alpha: 0.9),
+                        fontWeight: FontWeight.w400,
+                      ),
+                      textDirection: TextDirection.rtl,
+                    )
                     .animate()
                     .fade(delay: 600.ms, duration: 600.ms)
                     .slideY(begin: 0.3, end: 0, curve: Curves.easeOut),
@@ -306,14 +316,14 @@ class _SplashScreenState extends State<SplashScreen>
                 const SizedBox(height: 20),
 
                 Text(
-                  'صحیح البخاری',
-                  style: GoogleFonts.amiri(
-                    fontSize: 36,
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  textDirection: TextDirection.rtl,
-                )
+                      'صحیح البخاری',
+                      style: GoogleFonts.amiri(
+                        fontSize: 36,
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textDirection: TextDirection.rtl,
+                    )
                     .animate()
                     .fade(delay: 800.ms, duration: 600.ms)
                     .slideY(begin: 0.5, end: 0, curve: Curves.easeOut),
@@ -321,14 +331,14 @@ class _SplashScreenState extends State<SplashScreen>
                 const SizedBox(height: 8),
 
                 Text(
-                  'Sahih Al-Bukhari',
-                  style: GoogleFonts.rubik(
-                    fontSize: 18,
-                    color: Colors.white.withValues(alpha: 0.85),
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 2,
-                  ),
-                )
+                      'Sahih Al-Bukhari',
+                      style: GoogleFonts.rubik(
+                        fontSize: 18,
+                        color: Colors.white.withValues(alpha: 0.85),
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 2,
+                      ),
+                    )
                     .animate()
                     .fade(delay: 1000.ms, duration: 600.ms)
                     .slideY(begin: 0.5, end: 0, curve: Curves.easeOut),

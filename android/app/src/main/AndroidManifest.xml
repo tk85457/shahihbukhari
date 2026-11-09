@@ -37,32 +37,6 @@
             </intent-filter>
         </activity>
 
-        <!-- FIX: Override ironSource Activities to remove orientation/resizability restrictions
-             (fixes Android 16+ large-screen advisory for ControllerActivity, InterstitialActivity, OpenUrlActivity) -->
-        <activity
-            android:name="com.ironsource.sdk.controller.ControllerActivity"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|layoutDirection|density"
-            android:hardwareAccelerated="true"
-            android:resizeableActivity="true"
-            tools:node="merge"
-            tools:replace="android:configChanges,android:resizeableActivity" />
-
-        <activity
-            android:name="com.ironsource.sdk.controller.InterstitialActivity"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|layoutDirection|density"
-            android:hardwareAccelerated="true"
-            android:resizeableActivity="true"
-            tools:node="merge"
-            tools:replace="android:configChanges,android:resizeableActivity" />
-
-        <activity
-            android:name="com.ironsource.sdk.controller.OpenUrlActivity"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|layoutDirection|density"
-            android:hardwareAccelerated="true"
-            android:resizeableActivity="true"
-            tools:node="merge"
-            tools:replace="android:configChanges,android:resizeableActivity" />
-
         <!-- Disable Impeller to prevent GPU deadlocks on some Adreno devices -->
         <meta-data
             android:name="io.flutter.embedding.android.EnableImpeller"

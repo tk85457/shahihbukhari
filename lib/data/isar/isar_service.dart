@@ -1,19 +1,58 @@
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'dart:async';
+import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:isar_community/isar.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:sqflite/sqflite.dart' show Database, Sqflite;
 import 'isar_models.dart';
 import '../database/app_database.dart';
 
+/// Search index (Isar). The source of truth for hadith data is SQLite; Isar only
+/// holds a copy of chapters + hadiths so full-text style search is fast.
 class IsarService {
   static final IsarService instance = IsarService._init();
+
+  /// Rows copied per batch. Small batches keep every Dart event-loop slice
+  /// short, so touch/draw events are never starved on low-end phones.
+  static const int _batchSize = 250;
+
   Isar? _isar;
+  Future<Isar>? _opening;
 
   IsarService._init();
 
-  Future<Isar> get db async {
-    if (_isar != null) return _isar!;
-    _isar = await _initIsar();
-    return _isar!;
+  /// Opens Isar exactly once. Concurrent callers (splash warm-up, search, ...)
+  /// all share the same in-flight future, so the import can never run twice.
+  /// A failed attempt is forgotten so the next call can retry.
+  Future<Isar> get db {
+    final ready = _isar;
+    if (ready != null) return Future<Isar>.value(ready);
+    return _opening ??= _openOnce();
+  }
+
+  Future<Isar> _openOnce() async {
+    try {
+      final isar = await _initIsar();
+      _isar = isar;
+      return isar;
+    } catch (e) {
+      _opening = null; // allow a clean retry on the next call
+      rethrow;
+    }
+  }
+
+  /// Completes when the Isar warm-up (which includes the long first-launch
+  /// import) has finished, failed, or [timeout] passed. Never throws.
+  /// Returns immediately if no warm-up is running.
+  Future<void> whenWarmupDone({
+    Duration timeout = const Duration(seconds: 60),
+  }) async {
+    final opening = _opening;
+    if (opening == null) return;
+    try {
+      await opening.timeout(timeout);
+    } catch (_) {
+      // Failure/timeout is handled by whoever awaits `db`; we only wait here.
+    }
   }
 
   Future<Isar> _initIsar() async {
@@ -31,75 +70,89 @@ class IsarService {
       inspector: kDebugMode,
     );
 
-    final count = await isar.isarHadiths.count();
-    if (count == 0) {
-      await _syncFromSqlite(isar);
-    }
-
+    await _ensureCatalogImported(isar);
     return isar;
   }
 
-  Future<void> _syncFromSqlite(Isar isar) async {
-    final sqlite = AppDatabase.instance;
-    final db = await sqlite.database;
+  /// Makes sure Isar holds the COMPLETE catalog.
+  ///
+  /// Old logic ("import only if Isar is empty") left search permanently
+  /// incomplete when the app was closed in the middle of the first import.
+  /// Now we compare the Isar count with SQLite and redo a clean import when
+  /// they differ (missing OR partial). Complete installs are untouched.
+  Future<void> _ensureCatalogImported(Isar isar) async {
+    final sqlite = await AppDatabase.instance.database;
+    final expected =
+        Sqflite.firstIntValue(
+          await sqlite.rawQuery('SELECT COUNT(*) FROM hadiths'),
+        ) ??
+        0;
+    if (expected == 0) return; // nothing to index
 
-    final chaptersRaw = await db.query('chapters');
-    final isarChapters = chaptersRaw.map((e) => IsarChapter()
-      ..sqliteId = e['id'] as int
-      ..bookNumber = e['book_number'] as int
-      ..titleArabic = e['title_arabic'] as String
-      ..titleUrdu = e['title_urdu'] as String
-      ..titleEnglish = e['title_english'] as String
-      ..hadithCount = e['hadith_count'] as int).toList();
+    final imported = await isar.isarHadiths.count();
+    if (imported == expected) return; // already complete
 
+    debugPrint(
+      'Isar catalog incomplete ($imported/$expected). Re-importing cleanly.',
+    );
+    await _importCatalog(isar, sqlite);
+  }
+
+  Future<void> _importCatalog(Isar isar, Database sqlite) async {
+    // Clean slate: leftovers of an interrupted import would otherwise violate
+    // the unique sqliteId index.
     await isar.writeTxn(() async {
-      await isar.isarChapters.putAll(isarChapters);
+      await isar.isarHadiths.clear();
+      await isar.isarChapters.clear();
     });
 
-    const batchSize = 1000;
-    int offset = 0;
+    final chaptersRaw = await sqlite.query('chapters');
+    final chapters = chaptersRaw
+        .map(
+          (e) => IsarChapter()
+            ..sqliteId = e['id'] as int
+            ..bookNumber = e['book_number'] as int
+            ..titleArabic = e['title_arabic'] as String
+            ..titleUrdu = e['title_urdu'] as String
+            ..titleEnglish = e['title_english'] as String
+            ..hadithCount = e['hadith_count'] as int,
+        )
+        .toList();
+    await isar.writeTxn(() => isar.isarChapters.putAll(chapters));
+
+    // Keyset pagination (id > last) instead of OFFSET: every batch costs the
+    // same instead of re-scanning all previous rows.
+    var lastId = 0;
     while (true) {
-      final hadithsRaw = await db.query('hadiths', limit: batchSize, offset: offset);
-      if (hadithsRaw.isEmpty) break;
+      final rows = await sqlite.query(
+        'hadiths',
+        where: 'id > ?',
+        whereArgs: [lastId],
+        orderBy: 'id ASC',
+        limit: _batchSize,
+      );
+      if (rows.isEmpty) break;
 
-      final isarHadiths = hadithsRaw.map((e) => IsarHadith()
-        ..sqliteId = e['id'] as int
-        ..chapterId = e['chapter_id'] as int
-        ..hadithNumber = e['hadith_number'].toString()
-        ..arabicText = e['arabic_text'] as String
-        ..urduText = e['urdu_text'] as String
-        ..englishText = e['english_text'] as String
-        ..isPrimary = (e['is_primary'] as int? ?? 1) == 1
-        ..parentId = e['parent_id'] as int?).toList();
+      final batch = rows
+          .map(
+            (e) => IsarHadith()
+              ..sqliteId = e['id'] as int
+              ..chapterId = e['chapter_id'] as int
+              ..hadithNumber = e['hadith_number'].toString()
+              ..arabicText = e['arabic_text'] as String
+              ..urduText = e['urdu_text'] as String
+              ..englishText = e['english_text'] as String
+              ..isPrimary = (e['is_primary'] as int? ?? 1) == 1
+              ..parentId = e['parent_id'] as int?,
+          )
+          .toList();
+      await isar.writeTxn(() => isar.isarHadiths.putAll(batch));
 
-      await isar.writeTxn(() async {
-        await isar.isarHadiths.putAll(isarHadiths);
-      });
-      offset += batchSize;
-    }
+      lastId = rows.last['id'] as int;
 
-    final bookmarksRaw = await db.query('bookmarks');
-    final isarBookmarks = bookmarksRaw.map((e) => IsarBookmark()
-      ..hadithId = e['hadith_id'] as int
-      ..createdAt = DateTime.parse(e['created_at'] as String)).toList();
-
-    if (isarBookmarks.isNotEmpty) {
-      await isar.writeTxn(() async {
-        await isar.isarBookmarks.putAll(isarBookmarks);
-      });
-    }
-
-    final notesRaw = await db.query('notes');
-    final isarNotes = notesRaw.map((e) => IsarNote()
-      ..hadithId = e['hadith_id'] as int
-      ..content = e['content'] as String
-      ..createdAt = DateTime.parse(e['created_at'] as String)
-      ..updatedAt = DateTime.parse(e['updated_at'] as String)).toList();
-
-    if (isarNotes.isNotEmpty) {
-      await isar.writeTxn(() async {
-        await isar.isarNotes.putAll(isarNotes);
-      });
+      // Give the UI isolate a breather between batches so input events and
+      // frames are processed (this is what prevents the Dart-side ANR).
+      await Future<void>.delayed(const Duration(milliseconds: 4));
     }
   }
 
@@ -120,10 +173,12 @@ class IsarService {
             .filter()
             .isPrimaryEqualTo(true)
             .and()
-            .group((q) => q
-                .urduTextContains(query, caseSensitive: false)
-                .or()
-                .hadithNumberEqualTo(query))
+            .group(
+              (q) => q
+                  .urduTextContains(query, caseSensitive: false)
+                  .or()
+                  .hadithNumberEqualTo(query),
+            )
             .sortByHadithNumber()
             .offset(offset)
             .limit(limit)
@@ -146,10 +201,12 @@ class IsarService {
             .filter()
             .isPrimaryEqualTo(true)
             .and()
-            .group((q) => q
-                .englishTextContains(query, caseSensitive: false)
-                .or()
-                .hadithNumberEqualTo(query))
+            .group(
+              (q) => q
+                  .englishTextContains(query, caseSensitive: false)
+                  .or()
+                  .hadithNumberEqualTo(query),
+            )
             .sortByHadithNumber()
             .offset(offset)
             .limit(limit)
@@ -172,14 +229,16 @@ class IsarService {
           .filter()
           .isPrimaryEqualTo(true)
           .and()
-          .group((q) => q
-              .urduTextContains(query, caseSensitive: false)
-              .or()
-              .englishTextContains(query, caseSensitive: false)
-              .or()
-              .arabicTextContains(query, caseSensitive: false)
-              .or()
-              .hadithNumberEqualTo(query))
+          .group(
+            (q) => q
+                .urduTextContains(query, caseSensitive: false)
+                .or()
+                .englishTextContains(query, caseSensitive: false)
+                .or()
+                .arabicTextContains(query, caseSensitive: false)
+                .or()
+                .hadithNumberEqualTo(query),
+          )
           .sortByHadithNumber()
           .offset(offset)
           .limit(limit)
@@ -217,10 +276,12 @@ class IsarService {
             .filter()
             .isPrimaryEqualTo(true)
             .and()
-            .group((q) => q
-                .urduTextContains(query, caseSensitive: false)
-                .or()
-                .hadithNumberEqualTo(query))
+            .group(
+              (q) => q
+                  .urduTextContains(query, caseSensitive: false)
+                  .or()
+                  .hadithNumberEqualTo(query),
+            )
             .count();
       }
       return isar.isarHadiths
@@ -237,10 +298,12 @@ class IsarService {
             .filter()
             .isPrimaryEqualTo(true)
             .and()
-            .group((q) => q
-                .englishTextContains(query, caseSensitive: false)
-                .or()
-                .hadithNumberEqualTo(query))
+            .group(
+              (q) => q
+                  .englishTextContains(query, caseSensitive: false)
+                  .or()
+                  .hadithNumberEqualTo(query),
+            )
             .count();
       }
       return isar.isarHadiths
@@ -257,14 +320,16 @@ class IsarService {
           .filter()
           .isPrimaryEqualTo(true)
           .and()
-          .group((q) => q
-              .urduTextContains(query, caseSensitive: false)
-              .or()
-              .englishTextContains(query, caseSensitive: false)
-              .or()
-              .arabicTextContains(query, caseSensitive: false)
-              .or()
-              .hadithNumberEqualTo(query))
+          .group(
+            (q) => q
+                .urduTextContains(query, caseSensitive: false)
+                .or()
+                .englishTextContains(query, caseSensitive: false)
+                .or()
+                .arabicTextContains(query, caseSensitive: false)
+                .or()
+                .hadithNumberEqualTo(query),
+          )
           .count();
     }
     return isar.isarHadiths

@@ -62,16 +62,34 @@ class AppDatabase {
     if (bytes.isEmpty) {
       throw StateError('Bundled database asset assets/db/$_dbName is empty.');
     }
-    await File(targetPath).writeAsBytes(bytes, flush: true);
+    // Write to a temp file and rename: if the app is killed or the disk fills
+    // up mid-copy, no half-written database is ever left at the real path.
+    final tmp = File('$targetPath.tmp');
+    try {
+      if (await tmp.exists()) await tmp.delete();
+      await tmp.writeAsBytes(bytes, flush: true);
+      await tmp.rename(targetPath);
+    } catch (_) {
+      try {
+        if (await tmp.exists()) await tmp.delete();
+      } catch (_) {}
+      rethrow;
+    }
   }
 
   Future<void> _ensureNativeDatabaseFile(String dbPath) async {
     final dbFile = File(dbPath);
     final exists = await dbFile.exists();
     final hasBytes = exists && await dbFile.length() > 0;
+    // Fast path (every normal launch): this file was already fully validated
+    // once, so skip the extra open/close of the 27 MB database.
+    final marker = File('$dbPath.validated');
+    if (hasBytes && await marker.exists()) return;
+
     final hasSchema = hasBytes && await _hasRequiredTables(dbPath);
 
     if (hasSchema) {
+      await _writeValidatedMarker(marker);
       return;
     }
 
@@ -90,6 +108,15 @@ class AppDatabase {
         await _hasRequiredTables(dbPath);
     if (!copiedHasSchema) {
       throw StateError('Failed to initialize the bundled database at $dbPath.');
+    }
+    await _writeValidatedMarker(marker);
+  }
+
+  Future<void> _writeValidatedMarker(File marker) async {
+    try {
+      await marker.writeAsString('ok', flush: true);
+    } catch (_) {
+      // Only an optimisation: validation just runs again on the next launch.
     }
   }
 

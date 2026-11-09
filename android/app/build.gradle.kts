@@ -70,7 +70,9 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
-    implementation("androidx.activity:activity-ktx:1.9.0")
+    // 1.12.x: newer enableEdgeToEdge() implementation (the old 1.9.0 one is what
+    // Play Console flags for deprecated setStatusBarColor/setNavigationBarColor).
+    implementation("androidx.activity:activity-ktx:1.12.4")
 
     // Google Mobile Ads Mediation Adapters & SDKs
     // Unity Ads SDK + Official Google AdMob Adapter
@@ -78,9 +80,6 @@ dependencies {
     implementation("com.google.ads.mediation:unity:4.13.1.0")
     // Meta Audience Network
     implementation("com.google.ads.mediation:facebook:6.18.0.0")
-    // ironSource (Unity LevelPlay) Official Google Mediation Adapter & Core SDK
-    implementation("com.google.ads.mediation:ironsource:8.7.0.0")
-    implementation("com.ironsource.sdk:mediationsdk:8.7.0")
 }
 
 // --- 16 KB page size fix -----------------------------------------------
